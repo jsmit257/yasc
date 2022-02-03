@@ -2,12 +2,16 @@ function threeD(renderer, subscriber) {
   const FPS = 10000/2499 // frames per second (NTSC, just for the hell of it)
   const [TX, TY, TZ] = [.001, .002, .003] // how many radians to rotate per frame, per axis
 
+  var clipping = false
+  var perspective = true
+
   function Matrix(tx, ty, tz) {
     const C = Math.cos, S = Math.sin  // lazy programmer doesn't like to type
 
-    var [tx, ty, tz]  = [tx || 0, ty || 0, tz || 0] // missing values are assumed to be 0
-    var state = xform(
-      xform([ // x-axis
+    tx ||= 0, ty ||= 0, tz ||= 0 // missing values are assumed to be 0
+
+    var state = multiply(
+      multiply([ // x-axis
         [1, 0, 0],
         [0, C(tx), S(tx)],
         [0, -S(tx), C(tx)]
@@ -22,15 +26,8 @@ function threeD(renderer, subscriber) {
         [-S(tz), C(tz), 0],
         [0, 0, 1]
     ])
-    // we built state with multiplication, b/c frankly it's easier that way, but
-    // we could also build it statically, like so:
-    // [
-    //   [],
-    //   [],
-    //   []
-    // ]
 
-    function xform(A, B) {
+    function multiply(A, B) {
       var m = A.length
       var n = A[0].length
       var p = B[0].length
@@ -51,7 +48,7 @@ function threeD(renderer, subscriber) {
     this.transform = function(multiplier) {
       if (!(multiplier instanceof Matrix))
         throw "expecting type Matrix for multiplier, got: " + typeof multiplier + ", " + multiplier
-      return new Matrix().setState(xform(state, multiplier.getState()))
+      return new Matrix().setState(multiply(state, multiplier.getState()))
     }
 
     this.invert = function() {
@@ -94,17 +91,13 @@ function threeD(renderer, subscriber) {
       sub("matrix", state)
       return this
     }
-
-    function parallax(vector) {
-      return new Vector()
-    }
     //
     // END: helper functions that aren't worth paying attention to
     //
   }
 
   function Vector(x, y, z) {  // maybe someday i'll make this a unit vector with a scale
-    var [x, y, z] = [x || 0, y || 0, z || 0]  // sanity, defaults to 0
+    x ||= 0, y ||= 0, z ||= 0  // sanity, defaults to 0
 
     // scale is a cheap way to imply distance; the farther away a thing is on the z-axis, the
     // smaller the scale factor; the thing touching the front of your eyeball should have a
@@ -140,9 +133,37 @@ function threeD(renderer, subscriber) {
     this.getY = function() {return y}
     this.getZ = function() {return z}
 
+    // normalize isn't a great name, since it usually means converting a point to a
+    // unit-vector with scale, but this is handy for finding the distince between
+    // two vectors, as in: `p1.normalize(p2).length()`
+    this.normalize = function(origin) {
+        return new Vector(x - origin.getX(), y - origin.getY(), z - origin.getZ())
+    }
+
+    this.unit = function() {
+      var l = Math.sqrt(x^2 + y^2 + z^2)
+      return {
+        dx: x / l,
+        dy: y / l,
+        dz: z / l,
+        length: l
+      }
+    }
+
+    this.parallax =  function() {
+      if (!perspective)
+        return this
+      var factor = (5 + z) / 5
+      return new Vector(x * factor, y * factor, z)
+    }
+
     this.pub = function(sub) {
-      sub("x: ", x, ", y: ", y, ", z: ", z)
+      sub(this.toString())
       return this
+    }
+
+    this.toString = function() {
+      return "x: " + x + ", y: " + y + ", z: " + z
     }
     //
     // END: helper functions that aren't worth paying attention to
@@ -150,7 +171,7 @@ function threeD(renderer, subscriber) {
   }
 
   var shape = new function() {
-    var [tx, ty, tz] = [0, 0, 0]
+    var tx = 0, ty = 0, tz = 0
 
     // vertices are just dots that you connect with edges (below); the reference implementation
     // is just a cube, but if you want to do the math, you could make soccer balls, or buckyballs
@@ -188,8 +209,11 @@ function threeD(renderer, subscriber) {
 
     this.rotate = function(render) {
       var i, j, vertices = xform(new Matrix(tx += TX, ty += TY, tz += TZ))
-      for (i = 0, j = edges.length; i < j; i++)
-        render(vertices[edges[i][0]], vertices[edges[i][1]])
+      for (i = 0, j = edges.length; i < j; i++) {
+        var [start, end, ok] = clip(vertices[edges[i][0]], vertices[edges[i][1]])
+        if (ok)
+          render(start, end)
+      }
       return this
     }
 
@@ -198,10 +222,25 @@ function threeD(renderer, subscriber) {
       return this
     }
 
+    // there are better ways to do clipping
+    function clip(start, end) {
+      if (!clipping)
+        return [start, end, true]
+      if (end.getZ() > start.getZ())
+        var [start, end] = [end, start]
+      if (end.getZ() > 0)  // this means that both points are behind us
+        return [null, null, false]
+      if (start.getZ() <= 0)
+        return [start, end, true]
+      var unit = start.normalize(end).unit()
+      unit.length *= (start.getZ() - end.getZ()) / unit.length
+      return [new Vector(start.getX() - unit.dx * unit.length, start.getY() - unit.dy * unit.length, 0), end, true]
+    }
+
     function xform(m) {
       var i, j, result = new Array(vertices.length)
       for (i = 0, j = vertices.length; i < j; i++) {
-        result[i] = vertices[i].transform(m).pub(console.log)
+        result[i] = vertices[i].transform(m).parallax().pub(console.log)
       }
       return result
     }
@@ -236,6 +275,11 @@ function threeD(renderer, subscriber) {
       }
     }, FPS, subscriber)
   }
+
+  this.toggleClipping = function() {
+    clipping = !clipping
+    return this
+  }
 }
 
-new threeD(document.getElementById('renderer'), console.log).run(3000)
+var runner = new threeD(document.getElementById('renderer'), console.log).run(3000)
