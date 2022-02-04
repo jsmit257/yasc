@@ -2,7 +2,7 @@ function threeD(renderer, subscriber) {
   const FPS = 10000/2499 // frames per second (NTSC, just for the hell of it)
   const [TX, TY, TZ] = [.001, .002, .003] // how many radians to rotate per frame, per axis
 
-  var clipping = false
+  var clipping = true
   var perspective = true
 
   function Matrix(tx, ty, tz) {
@@ -51,7 +51,8 @@ function threeD(renderer, subscriber) {
       return new Matrix().setState(multiply(state, multiplier.getState()))
     }
 
-    this.invert = function() {
+    // like the additive inverse in math: `m1.transform(m2).transform(m2.inverse()) == m1`; at least i hope it does
+    this.inverse = function() {
       var rows = state.length
       if (rows < 0)
         throw "state is empty"
@@ -96,7 +97,7 @@ function threeD(renderer, subscriber) {
     //
   }
 
-  function Vector(x, y, z) {  // maybe someday i'll make this a unit vector with a scale
+  function Vector(x, y, z) {  // a real unit vector is an anon inner class in the method `unit()`
     x ||= 0, y ||= 0, z ||= 0  // sanity, defaults to 0
 
     // scale is a cheap way to imply distance; the farther away a thing is on the z-axis, the
@@ -118,7 +119,7 @@ function threeD(renderer, subscriber) {
     }
 
     // transform is where the magic happens; you'll know that you've arrived when you
-    // see that the shape never moves - the world's moving around it
+    // see that the shape never moves - your head's moving inside of it
     this.transform = function(multiplier) {
       return new Matrix()
         .setState([[x, y, z]]) // vector is just a 1xN matrix, so recycle Matrix multiplication logic
@@ -129,25 +130,27 @@ function threeD(renderer, subscriber) {
     //
     // BEGIN: helper functions that aren't worth paying attention to
     //
-    this.getX = function() {return x}
-    this.getY = function() {return y}
-    this.getZ = function() {return z}
-
-    // normalize isn't a great name, since it usually means converting a point to a
-    // unit-vector with scale, but this is handy for finding the distince between
-    // two vectors, as in: `p1.normalize(p2).length()`
-    this.normalize = function(origin) {
-        return new Vector(x - origin.getX(), y - origin.getY(), z - origin.getZ())
-    }
+    this.getX = nil => x
+    this.getY = nil => y
+    this.getZ = nil => z
 
     this.unit = function() {
-      var l = Math.sqrt(x^2 + y^2 + z^2)
-      return {
-        dx: x / l,
-        dy: y / l,
-        dz: z / l,
-        length: l
-      }
+      return new function(l) {
+        console.log("wtf2", l)
+        var [dx, dy, dz, l] = [x/l, y/l, z/l, l]
+        this.scale = function(s) {
+          console.log("wtf1", dx, dy, dz, l)
+          l *= s
+          return this
+        }
+        this.getX = nil => dx * l
+        this.getY = nil => dy * l
+        this.getZ = nil => dz * l
+        this.getLength = nil => l
+        this.vector = function() {
+          return new Vector(this.getX(), this.getY(), this.getZ())
+        }
+      }(Math.sqrt(x*x + y*y + z*z))
     }
 
     this.parallax =  function() {
@@ -155,6 +158,11 @@ function threeD(renderer, subscriber) {
         return this
       var factor = (5 + z) / 5
       return new Vector(x * factor, y * factor, z)
+    }
+
+    // another additive inverse: `v1.translate(v2).translate(v2.inverse()) == v1`; for convencience
+    this.inverse = function() {
+      return new Vector(-x, -y, -z)
     }
 
     this.pub = function(sub) {
@@ -222,19 +230,27 @@ function threeD(renderer, subscriber) {
       return this
     }
 
-    // there are better ways to do clipping
+    // there are better ways to do real clipping
     function clip(start, end) {
       if (!clipping)
         return [start, end, true]
-      if (end.getZ() > start.getZ())
-        var [start, end] = [end, start]
+      if (end.getZ() > start.getZ())  // for our purpose, end should always have smaller z than start
+        [start, end] = [end, start]
       if (end.getZ() > 0)  // this means that both points are behind us
         return [null, null, false]
-      if (start.getZ() <= 0)
+      if (start.getZ() <= 0)  // if both points are in front of us, just draw the line
         return [start, end, true]
-      var unit = start.normalize(end).unit()
-      unit.length *= (start.getZ() - end.getZ()) / unit.length
-      return [new Vector(start.getX() - unit.dx * unit.length, start.getY() - unit.dy * unit.length, 0), end, true]
+      return [
+        start.
+          translate(end.inverse()). // normalize start using end as the origin
+          unit().
+          // endZ is negative and startZ isn't, so this is a positive factor
+          scale(end.getZ() / (end.getZ() - start.getZ())).
+          vector().
+          translate(end),
+        end,
+        true
+      ]
     }
 
     function xform(m) {
