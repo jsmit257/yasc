@@ -2,7 +2,7 @@ function threeD(renderer, subscriber) {
   const FPS = 10000/2499 // frames per second (NTSC, just for the hell of it)
   const [TX, TY, TZ] = [.001, .002, .003] // how many radians to rotate per frame, per axis
 
-  var clipping = true
+  var clipping = false
   var perspective = true
 
   function Matrix(tx, ty, tz) {
@@ -82,8 +82,8 @@ function threeD(renderer, subscriber) {
       return this
     }
 
-    // toVector returns a single column from a matrix as a vector
-    this.toVector = function(axis) {
+    // vector returns a single column from a matrix as a vector
+    this.vector = function(axis) {
       var axis = axis || 0 // dunno why it wouldn't be 0, but maybe you have reasons
       return new Vector(state[axis][0], state[axis][1], state[axis][2])
     }
@@ -115,7 +115,7 @@ function threeD(renderer, subscriber) {
     this.translate = function(delta) {
       if (!(delta instanceof Vector))
         throw "expecting type Vector for delta, got: " + typeof delta;
-      return new Vector(x + delta.getX(), y + delta.getY(), z + delta.getZ())
+      return new Vector(x + delta.X(), y + delta.Y(), z + delta.Z())
     }
 
     // transform is where the magic happens; you'll know that you've arrived when you
@@ -124,31 +124,25 @@ function threeD(renderer, subscriber) {
       return new Matrix()
         .setState([[x, y, z]]) // vector is just a 1xN matrix, so recycle Matrix multiplication logic
         .transform(multiplier) // it doesn't account for parallax, but that's ok
-        .toVector() // that's a mouthful
+        .vector() // that's a mouthful
     }
 
     //
     // BEGIN: helper functions that aren't worth paying attention to
     //
-    this.getX = nil => x
-    this.getY = nil => y
-    this.getZ = nil => z
+    this.X = _ => x
+    this.Y = _ => y
+    this.Z = _ => z
 
     this.unit = function() {
-      return new function(l) {
-        console.log("wtf2", l)
+      return new function(l) {  // anonymous duck-typing at it's finest
         var [dx, dy, dz, l] = [x/l, y/l, z/l, l]
         this.scale = function(s) {
-          console.log("wtf1", dx, dy, dz, l)
           l *= s
           return this
         }
-        this.getX = nil => dx * l
-        this.getY = nil => dy * l
-        this.getZ = nil => dz * l
-        this.getLength = nil => l
         this.vector = function() {
-          return new Vector(this.getX(), this.getY(), this.getZ())
+          return new Vector(dx*l, dy*l, dz*l)
         }
       }(Math.sqrt(x*x + y*y + z*z))
     }
@@ -156,7 +150,7 @@ function threeD(renderer, subscriber) {
     this.parallax =  function() {
       if (!perspective)
         return this
-      var factor = (5 + z) / 5
+      var factor = (5 + z) / 5  // FIXME: const distance where all points come together
       return new Vector(x * factor, y * factor, z)
     }
 
@@ -234,20 +228,20 @@ function threeD(renderer, subscriber) {
     function clip(start, end) {
       if (!clipping)
         return [start, end, true]
-      if (end.getZ() > start.getZ())  // for our purpose, end should always have smaller z than start
+      if (end.Z() > start.Z())  // for our purpose, end should always have smaller z than start
         [start, end] = [end, start]
-      if (end.getZ() > 0)  // this means that both points are behind us
+      if (end.Z() > 0)  // this means that both points are behind us
         return [null, null, false]
-      if (start.getZ() <= 0)  // if both points are in front of us, just draw the line
+      if (start.Z() <= 0)  // if both points are in front of us, just draw the line
         return [start, end, true]
       return [
         start.
-          translate(end.inverse()). // normalize start using end as the origin
+          translate(end.inverse()). // normalize `start` using `end` as the origin
           unit().
           // endZ is negative and startZ isn't, so this is a positive factor
-          scale(end.getZ() / (end.getZ() - start.getZ())).
+          scale(end.Z() / (end.Z() - start.Z())).
           vector().
-          translate(end),
+          translate(end),  // now shift it back where it came from
         end,
         true
       ]
@@ -273,10 +267,10 @@ function threeD(renderer, subscriber) {
     start = start.scale(30).translate(new Vector(renderer.width/2, renderer.height/2))
     end = end.scale(30).translate(new Vector(renderer.width/2, renderer.height/2))
     ctx.beginPath()
-    ctx.moveTo(start.getX(), start.getY())
-    ctx.lineTo(end.getX(), end.getY())
+    ctx.moveTo(start.X(), start.Y())
+    ctx.lineTo(end.X(), end.Y())
     ctx.stroke()
-    // console.log("x1", (start.getX() + renderer.width / 2), "y1", (start.getY() + renderer.height / 2), "x2", (end.getX() + renderer.width / 2), "y2", (end.getY() + renderer.height / 2))
+    // console.log("x1", (start.X() + renderer.width / 2), "y1", (start.Y() + renderer.height / 2), "x2", (end.X() + renderer.width / 2), "y2", (end.Y() + renderer.height / 2))
   }
 
   this.run = function(iterations) { // iterations<0 means infinite (or an integer overflow in a few thousand years)
