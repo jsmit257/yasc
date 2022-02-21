@@ -284,6 +284,7 @@ function threeD(renderer, subscriber) {
         clearInterval(loop)
       }
     }, FPS, subscriber)
+    return this
   }
 
   this.toggleClipping = function() {
